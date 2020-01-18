@@ -1,0 +1,26 @@
+<html>
+<head>
+
+</head>
+<body style="padding: 0; margin: 0">
+
+
+<canvas id="canvas" width="800" height="600" 
+	style="
+		width: 100%; height: 100%;
+		grid-column: 1; grid-row: 1">
+</canvas>
+
+<span style="position: fixed; z-index: 100; left: 10px; top: 10px;">
+	WebGPU Point Cloud rendering test. <br>
+	#points: 3,954,696 (134MB)<br>
+	More infos: <a href="https://github.com/m-schuetz/webgpu_pointcloud">github.com/m-schuetz/webgpu_pointcloud</a></a><br>
+	<span id="progress"></span>
+</span>
+
+<script src="./libs/gl-matrix.js"></script>
+<script type="module" src="main.js"></script>
+
+
+</body>
+</html>
