@@ -12,6 +12,6 @@ A WebGPU point cloud rendering test
 Demo: http://mschuetz.potree.org/webgpu_pointcloud/index.html
 
 <a href="http://mschuetz.potree.org/webgpu_pointcloud/index.html">
-	<img src="./resources/cover.jpg"/>
+	<img src="./resources/cover.jpg" width="50%/>
 </a>
 ![](resources/cover.jpg)
