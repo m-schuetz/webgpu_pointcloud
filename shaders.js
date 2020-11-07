@@ -130,30 +130,7 @@ fn readU32(byteOffset : u32) -> u32{
 }
 
 fn readI32(byteOffset : u32) -> i32{
-
-	var b0SourceIndex : u32 = (byteOffset + 0) / 4u;
-	var b1SourceIndex : u32 = (byteOffset + 1) / 4u;
-	var b2SourceIndex : u32 = (byteOffset + 2) / 4u;
-	var b3SourceIndex : u32 = (byteOffset + 3) / 4u;
-
-	var result : i32 = 0;
-	
-	var overlapCase : u32 = byteOffset % 4u;
-
-	if(overlapCase == 0){
-		result = i32(lasdata.values[b0SourceIndex]);
-	}elseif(overlapCase == 1){
-		result = result | i32(lasdata.values[b0SourceIndex] << 8);
-		result = result | i32(lasdata.values[b0SourceIndex + 1] >> 24);
-	}elseif(overlapCase == 2){
-		result = result | i32(lasdata.values[b0SourceIndex] << 16);
-		result = result | i32(lasdata.values[b0SourceIndex + 1] >> 16);
-	}elseif(overlapCase == 3){
-		result = result | i32(lasdata.values[b0SourceIndex] << 24);
-		result = result | i32(lasdata.values[b0SourceIndex + 1] >> 8);
-	}
-
-	return result;
+	return i32(readU32(byteOffset));
 }
 
 [[stage(compute)]]
@@ -169,13 +146,38 @@ fn main() -> void{
 	var uy : i32 = readI32(index * recordLength + 4);
 	var uz : i32 = readI32(index * recordLength + 8);
 
-	var x : f32 = f32(ux) / 100.0;
-	var y : f32 = f32(uy) / 100.0;
-	var z : f32 = f32(uz) / 100.0;
+	var x : f32 = f32(ux) / 1000.0;
+	var y : f32 = f32(uy) / 1000.0;
+	var z : f32 = f32(uz) / 1000.0;
 
 	positions.values[3 * index + 0] = x;
 	positions.values[3 * index + 1] = y;
 	positions.values[3 * index + 2] = z;
+	
+	#positions.values[3 * index + 0] = f32(index) / 1000.0;
+	#positions.values[3 * index + 1] = 0.0;
+	#positions.values[3 * index + 2] = 0.0;
+
+	var R : u32 = readU32(index * recordLength + 20u) & 0x0000ffff;
+	var G : u32 = readU32(index * recordLength + 20u) >> 16;
+	var B : u32 = readU32(index * recordLength + 24u) & 0x0000ffff;
+
+	if(R > 255u){
+		R = R / 256u;
+	}
+
+	if(G > 255u){
+		G = G / 256u;
+	}
+
+	if(B > 255u){
+		B = B / 256u;
+	}
+
+	colors.values[index].r = f32(R) / 256.0;
+	colors.values[index].g = f32(G) / 256.0;
+	colors.values[index].b = f32(B) / 256.0;
+	colors.values[index].a = 1.0;
 
 	return;
 }

@@ -31,7 +31,7 @@ function getTransformationMatrix() {
 	mat4.perspective(projectionMatrix, (2 * Math.PI) / 5, aspect, 0.1, 1000.0);
 
 	let viewMatrix = mat4.create();
-	mat4.translate(viewMatrix, viewMatrix, vec3.fromValues(0, 0, -15));
+	mat4.translate(viewMatrix, viewMatrix, vec3.fromValues(0, 0, -20));
 	let now = Date.now() / 1000;
 
 	mat4.rotate(
@@ -98,20 +98,78 @@ async function initScene(){
 
 	let elProgress = document.getElementById("progress");
 
-	// let pipeline = device.createComputePipeline({
-	// 	computeStage: {
-	// 		module: device.createShaderModule({code: shaders.csLasToVBO}),
-	// 		entryPoint: "main",
-	// 	}
-	// });
+	let pipeline = device.createComputePipeline({
+		computeStage: {
+			module: device.createShaderModule({code: shaders.csLasToVBO}),
+			entryPoint: "main",
+		}
+	});
 
 	let asyncLoad = async () => {
 		let iterator = loader.loadBatches();
 		let pointsLoaded = 0;
 		for await (let batch of iterator){
 
-			device.defaultQueue.writeBuffer(bufPositions, 12 * pointsLoaded, batch.positions);
-			device.defaultQueue.writeBuffer(bufColors, 16 * pointsLoaded, batch.colors);
+
+			let lasbuffer = device.createBuffer({
+				size: batch.size * 64,
+				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+				// mappedAtCreation: true,
+			});
+
+			// new Uint8Array(lasbuffer.getMappedRange()).set(batch.buffer);
+			// lasbuffer.unmap();
+
+			let tmp = new Uint8Array(batch.size * 64);
+			tmp.set(new Uint8Array(batch.buffer));
+			device.defaultQueue.writeBuffer(lasbuffer, 0, tmp);
+
+
+			if(pointsLoaded === 0){
+				let csBindGroup = device.createBindGroup({
+					layout: pipeline.getBindGroupLayout(0),
+					entries: [{
+						binding: 0,
+						resource: {
+							buffer: lasbuffer,
+							offset: 0,
+							size: batch.size * 64,
+						}
+					},{
+						binding: 1,
+						resource: {
+							buffer: bufPositions,
+							offset: 0,
+							size: bufPositions.byteLength,
+						}
+					},{
+						binding: 2,
+						resource: {
+							buffer: bufColors,
+							offset: 0,
+							size: bufColors.byteLength,
+						}
+					}],
+				});
+
+				const commandEncoder = device.createCommandEncoder();
+
+				let passEncoder = commandEncoder.beginComputePass();
+				passEncoder.setPipeline(pipeline);
+				passEncoder.setBindGroup(0, csBindGroup);
+				passEncoder.dispatch(batch.size);
+				passEncoder.endPass();
+
+				device.defaultQueue.submit([commandEncoder.finish()]);
+			}else{
+				device.defaultQueue.writeBuffer(bufPositions, 12 * pointsLoaded, batch.positions);
+				device.defaultQueue.writeBuffer(bufColors, 16 * pointsLoaded, batch.colors);
+			}
+
+
+
+
+
 
 			pointsLoaded += batch.size;
 
@@ -315,13 +373,13 @@ async function run(){
 
 			const commandEncoder = device.createCommandEncoder();
 
-			if(frame > 10){
-				let passEncoder = commandEncoder.beginComputePass();
-				passEncoder.setPipeline(csPipeline);
-				passEncoder.setBindGroup(0, csBindGroup);
-				passEncoder.dispatch(100_000);
-				passEncoder.endPass();
-			}
+			// if(frame > 10){
+			// 	let passEncoder = commandEncoder.beginComputePass();
+			// 	passEncoder.setPipeline(csPipeline);
+			// 	passEncoder.setBindGroup(0, csBindGroup);
+			// 	passEncoder.dispatch(100_000);
+			// 	passEncoder.endPass();
+			// }
 
 			{
 				let passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
