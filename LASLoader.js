@@ -157,6 +157,7 @@ export class LASLoader{
 				size: currentBatchSize,
 				positions: positions, 
 				colors: colors,
+				buffer: buffer,
 			};
 
 			pointsLoaded += currentBatchSize;
@@ -169,7 +170,7 @@ export class LASLoader{
 				let durationLoadString = parseInt(durationLoad) + "ms";
 				let durationParseString = parseInt(durationParse) + "ms";
 				let strPoints = `${currentBatchSize.toLocaleString()} points`;
-				console.log(`batch(${strPoints}) loaded in ${durationLoadString}, parsed in ${durationParseString}`);
+				// console.log(`batch(${strPoints}) loaded in ${durationLoadString}, parsed in ${durationParseString}`);
 			}
 
 			yield batch;

@@ -1,109 +1,92 @@
 
-// based on cube example from https://github.com/cx20/webgpu-test (MIT license)
+// after https://github.com/austinEng/webgpu-samples/blob/master/src/examples/rotatingCube.ts
 
-import {LASLoader} from "./LASLoader.js";
 
-let urlPointcloud = "http://mschuetz.potree.org/lion/lion.las";
+import {LASLoader} from './LASLoader.js';
+import { mat4, vec3 } from './libs/gl-matrix.js';
+import {cube, pointCube} from "./cube.js";
+import * as shaders from "./shaders.js";
 
-// ==========================================
-// VERTEX SHADER
-// ==========================================
+//let urlPointcloud = "http://mschuetz.potree.org/lion/lion.las";
+let urlPointcloud = "./heidentor.las";
 
-let vs = `
-#version 450
-
-layout(set = 0, binding = 0) uniform Uniforms {
-	mat4 worldViewProj;
-} uniforms;
-
-layout(location = 0) in vec3 position;
-layout(location = 1) in vec4 color;
-
-layout(location = 0) out vec4 vColor;
-
-void main() {
-	vColor = color;
-	gl_Position = uniforms.worldViewProj * vec4(position, 1.0);
-}
-`;
-
-// ==========================================
-// FRAGMENT SHADER
-// ==========================================
-
-let fs = `
-#version 450
-
-layout(location = 0) in vec4 vColor;
-layout(location = 0) out vec4 outColor;
-
-void main() {
-	outColor = vColor;
-}
-`;
-
-// ==========================================
-// MAGIC
-// ==========================================
-
-let frameCount = 0;
-let lastFpsMeasure = 0;
-
-let canvas = null;
-let context = null;
-let glslang = null;
-let gpu = null;
 let adapter = null;
 let device = null;
+let canvas = null;
+let context = null;
 let swapChain = null;
-let sceneObject = null;
-let worldViewProj = mat4.create();
-let shader = {
-	vsModule: null,
-	fsModule: null,
-};
-let pipeline = null;
-let uniformBindGroup = null;
 let depthTexture = null;
-let uniformBuffer = null;
 
+let scene = {
+	pointcloud: null,
+};
 
-function configureSwapChain(device, swapChainFormat, context) {
-	const swapChainDescriptor = {
-		device: device,
-		format: swapChainFormat
-	};
+let aspect = 3 / 4;
+let projectionMatrix = mat4.create();
+mat4.perspective(projectionMatrix, (2 * Math.PI) / 5, aspect, 0.1, 1000.0);
 
-	return context.configureSwapChain(swapChainDescriptor);
+function getTransformationMatrix() {
+
+	aspect = canvas.clientWidth / canvas.clientHeight;
+	mat4.perspective(projectionMatrix, (2 * Math.PI) / 5, aspect, 0.1, 1000.0);
+
+	let viewMatrix = mat4.create();
+	mat4.translate(viewMatrix, viewMatrix, vec3.fromValues(0, 0, -15));
+	let now = Date.now() / 1000;
+
+	mat4.rotate(
+		viewMatrix,
+		viewMatrix,
+		now,
+		vec3.fromValues(0, 1, 0)
+	);
+
+	let modelViewProjectionMatrix = mat4.create();
+	mat4.multiply(modelViewProjectionMatrix, projectionMatrix, viewMatrix);
+
+	return modelViewProjectionMatrix;
 }
 
-function makeShaderModule_GLSL(glslang, device, type, source) {
-	let shaderModuleDescriptor = {
-		code: glslang.compileGLSL(source, type),
-		source: source
-	};
 
-	let shaderModule = device.createShaderModule(shaderModuleDescriptor);
-	return shaderModule;
+async function init(){
+	adapter = await navigator.gpu.requestAdapter();
+	device = await adapter.requestDevice();
+
+	canvas = document.getElementById("canvas");
+	context = canvas.getContext("gpupresent");
+
+	swapChain = context.configureSwapChain({
+		device,
+		format: "bgra8unorm",
+	});
+
+	depthTexture = device.createTexture({
+		size: {
+			width: canvas.width,
+			height: canvas.height,
+			depth: 1,
+		},
+		format: "depth24plus-stencil8",
+		usage: GPUTextureUsage.OUTPUT_ATTACHMENT,
+	});
+
 }
 
-async function loadPointcloud(url, device){
-
-	let loader = new LASLoader(url);
+async function initScene(){
+	let loader = new LASLoader(urlPointcloud);
 	await loader.loadHeader();
 
 	let numPoints = loader.header.numPoints;
 
-	// create position and color buffer
 	let descriptorPos = {
 		size: 12 * numPoints,
-		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 	};
 	let bufPositions = device.createBuffer(descriptorPos);
 
 	let descriptorCol = {
 		size: 16 * numPoints,
-		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 	};
 	let bufColors = device.createBuffer(descriptorCol);
 
@@ -115,15 +98,21 @@ async function loadPointcloud(url, device){
 
 	let elProgress = document.getElementById("progress");
 
-	// this async function keeps on loading new data and updating the buffers
+	// let pipeline = device.createComputePipeline({
+	// 	computeStage: {
+	// 		module: device.createShaderModule({code: shaders.csLasToVBO}),
+	// 		entryPoint: "main",
+	// 	}
+	// });
+
 	let asyncLoad = async () => {
 		let iterator = loader.loadBatches();
 		let pointsLoaded = 0;
 		for await (let batch of iterator){
-			
-			bufPositions.setSubData(12 * pointsLoaded, batch.positions);
-			bufColors.setSubData(16 * pointsLoaded, batch.colors);
-			
+
+			device.defaultQueue.writeBuffer(bufPositions, 12 * pointsLoaded, batch.positions);
+			device.defaultQueue.writeBuffer(bufColors, 16 * pointsLoaded, batch.colors);
+
 			pointsLoaded += batch.size;
 
 			let progress = pointsLoaded / loader.header.numPoints;
@@ -138,229 +127,227 @@ async function loadPointcloud(url, device){
 	};
 
 	asyncLoad();
-	
-	return sceneObject;
+
+	scene.pointcloud = sceneObject;
 }
 
-async function initRenderer() {
-	const glslangModule = await import("https://unpkg.com/@webgpu/glslang@0.0.9/dist/web-devel/glslang.js");
-	glslang = await glslangModule.default();
+function createBuffer(data){
 
-	gpu = navigator['gpu'];
-	adapter = await gpu.requestAdapter();
-	device = await adapter.requestDevice();
+	let vbos = [];
 
-	canvas = document.getElementById('canvas');
-	context = canvas.getContext('gpupresent')
+	for(let entry of data.buffers){
+		let {name, buffer} = entry;
 
-	const swapChainFormat = "bgra8unorm";
-	swapChain = configureSwapChain(device, swapChainFormat, context);
+		let vbo = device.createBuffer({
+			size: buffer.byteLength,
+			usage: GPUBufferUsage.VERTEX,
+			mappedAtCreation: true,
+		});
 
-	shader.vsModule = makeShaderModule_GLSL(glslang, device, 'vertex', vs);
-	shader.fsModule = makeShaderModule_GLSL(glslang, device, 'fragment', fs);
+		let type = buffer.constructor;
+		new type(vbo.getMappedRange()).set(buffer);
+		vbo.unmap();
 
-	const uniformsBindGroupLayout = device.createBindGroupLayout({
-		bindings: [{
-			binding: 0,
-			visibility: GPUShaderStage.VERTEX,
-			type: "uniform-buffer"
-		}]
-	});
+		vbos.push({
+			name: name,
+			vbo: vbo,
+		});
+	}
 
-	const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [uniformsBindGroupLayout] });
+	return vbos;
+}
 
-	pipeline = device.createRenderPipeline({
-		layout: pipelineLayout,
+function createPipeline(vbos){
+
+	const pipeline = device.createRenderPipeline({
 		vertexStage: {
-			module: shader.vsModule,
-			entryPoint: 'main'
+			module: device.createShaderModule({code: shaders.vs}),
+			entryPoint: "main",
 		},
 		fragmentStage: {
-			module: shader.fsModule,
-			entryPoint: 'main'
+			module: device.createShaderModule({code: shaders.fs}),
+			entryPoint: "main",
 		},
-		vertexState: {
-			vertexBuffers: [
-				{
-					arrayStride: 3 * 4,
-					attributes: [
-						{ // position
-							shaderLocation: 0,
-							offset: 0,
-							format: "float3"
-						}
-					]
-				},{
-					arrayStride: 4 * 4,
-					attributes: [
-						{ // color
-							shaderLocation: 1,
-							offset: 0,
-							format: "float4"
-						}
-					]
-				}
-			]
-		},
-		colorStates: [
-			{
-				format: swapChainFormat,
-				alphaBlend: {
-					srcFactor: "src-alpha",
-					dstFactor: "one-minus-src-alpha",
-					operation: "add"
-				}
-			}
-		],
-		primitiveTopology: 'point-list',
-		rasterizationState: {
-			frontFace: "ccw",
-			cullMode: 'none'
-		},
+		primitiveTopology: "point-list",
 		depthStencilState: {
 			depthWriteEnabled: true,
 			depthCompare: "less",
 			format: "depth24plus-stencil8",
-		}
-	});
-
-	const uniformBufferSize = 4 * 16; // 4x4 matrix
-
-	uniformBuffer = device.createBuffer({
-		size: uniformBufferSize,
-		usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-	});
-
-	uniformBindGroup = device.createBindGroup({
-		layout: uniformsBindGroupLayout,
-		bindings: [{
-			binding: 0,
-			resource: {
-				buffer: uniformBuffer,
-			},
-		}],
-	});
-
-	depthTexture = device.createTexture({
-		size: {
-			width: canvas.width,
-			height: canvas.height,
-			depth: 1
 		},
-		format: "depth24plus-stencil8",
-		usage: GPUTextureUsage.OUTPUT_ATTACHMENT
-	});
-};
-
-async function initScene(){
-	sceneObject = await loadPointcloud(urlPointcloud, device);
-}
-
-
-function update(timestamp){
-
-	{ // update worldViewProj
-		let proj = mat4.create();
-		let view = mat4.create();
-
-		{ // proj
-			const aspect = Math.abs(canvas.width / canvas.height);
-			mat4.perspective(proj, 45, aspect, 0.1, 100.0);
-		}
-
-		{ // view
-			let target = vec3.fromValues(2, 5, 0);
-			let r = 5;
-			let x = r * Math.sin(timestamp / 1000) + target[0];
-			let y = r * Math.cos(timestamp / 1000) + target[1];
-			let z = 2;
-
-			let position = vec3.fromValues(x, y, z);
-			let up = vec3.fromValues(0, 0, 1);
-			mat4.lookAt(view, position, target, up);
-		}
-
-		mat4.multiply(worldViewProj, proj, view);
-	}
-
-}
-
-function render(timestamp){
-
-	let needsResize = canvas.width !== canvas.clientWidth || canvas.height !== canvas.clientHeight;
-	if(needsResize){
-		canvas.width = canvas.clientWidth;
-		canvas.height = canvas.clientHeight;
-
-		depthTexture = device.createTexture({
-			size: {
-				width: canvas.width,
-				height: canvas.height,
-				depth: 1
+		vertexState: {
+			vertexBuffers: [
+				{ // position
+					arrayStride: 3 * 4,
+					attributes: [{ 
+						shaderLocation: 0,
+						offset: 0,
+						format: "float3",
+					}],
+				},{ // color
+					arrayStride: 4 * 4,
+					attributes: [{ 
+						shaderLocation: 1,
+						offset: 0,
+						format: "float4",
+					}],
+				},
+			],
+		},
+		rasterizationState: {
+			cullMode: "none",
+		},
+		colorStates: [
+			{
+				format: "bgra8unorm",
 			},
-			format: "depth24plus-stencil8",
-			usage: GPUTextureUsage.OUTPUT_ATTACHMENT
-		});
-	}
+		],
+	});
 
-	uniformBuffer.setSubData(0, worldViewProj);
-
-	const commandEncoder = device.createCommandEncoder();
-	const textureView = swapChain.getCurrentTexture().createView();
-	const renderPassDescriptor = {
-		colorAttachments: [{
-			attachment: textureView,
-			loadValue: { r: 0, g: 0, b: 0, a: 0 },
-		}],
-		depthStencilAttachment: {
-			attachment: depthTexture.createView(),
-			depthLoadValue: 1.0,
-			depthStoreOp: "store",
-			stencilLoadValue: 0,
-			stencilStoreOp: "store",
-		}
-	};
-	const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-	passEncoder.setPipeline(pipeline);
-
-	if(sceneObject){
-		passEncoder.setVertexBuffer(0, sceneObject.bufPositions);
-		passEncoder.setVertexBuffer(1, sceneObject.bufColors);
-		passEncoder.setBindGroup(0, uniformBindGroup);
-		passEncoder.setViewport(0, 0, canvas.width, canvas.height, 0, 1);
-		passEncoder.draw(sceneObject.n, 1, 0, 0);
-	}
-
-	passEncoder.endPass();
-	device.defaultQueue.submit([commandEncoder.finish()]);
-
-	{// compute FPS
-		frameCount++;
-		let timeSinceLastFpsMeasure = (performance.now() - lastFpsMeasure) / 1000;
-		if(timeSinceLastFpsMeasure > 1){
-			let fps = frameCount / timeSinceLastFpsMeasure;
-			console.log(`fps: ${Math.round(fps)}`);
-			lastFpsMeasure = performance.now();
-			frameCount = 0;
-		}
-	}
+	return pipeline;
 }
 
-function loop(timestamp){
 
-	update(timestamp);
-	render(timestamp);
+function createComputeLasToVboPipeline(){
+	let pipeline = device.createComputePipeline({
+		computeStage: {
+			module: device.createShaderModule({code: shaders.csLasToVBO}),
+			entryPoint: "main",
+		}
+	});
 
-	requestAnimationFrame(loop);
+	return pipeline;
+}
+
+function createComputePipeline(){
+	let pipeline = device.createComputePipeline({
+		computeStage: {
+			module: device.createShaderModule({code: shaders.csTest}),
+			entryPoint: "main",
+		}
+	});
+
+	return pipeline;
 }
 
 async function run(){
 
-	await initRenderer();
-	await initScene();
+	await init()
+	initScene();
 
+	let vbos = createBuffer(pointCube);
+	let pipeline = createPipeline();
+	let csPipeline = createComputePipeline();
+	let csLasToVboPipeline = createComputeLasToVboPipeline();
+
+	const uniformBufferSize = 4 * 16; // 4x4 matrix
+
+	const uniformBuffer = device.createBuffer({
+		size: uniformBufferSize,
+		usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+	});
+
+	const uniformBindGroup = device.createBindGroup({
+		layout: pipeline.getBindGroupLayout(0),
+		entries: [
+		{
+			binding: 0,
+			resource: {
+			buffer: uniformBuffer,
+			},
+		},
+		],
+	});
+
+
+
+
+
+	let frame = 0;
+	let loop = () => {
+		frame++;
+
+		const transformationMatrix = getTransformationMatrix();
+		device.defaultQueue.writeBuffer(
+			uniformBuffer,
+			0,
+			transformationMatrix.buffer,
+			transformationMatrix.byteOffset,
+			transformationMatrix.byteLength
+		);
+
+		let renderPassDescriptor = {
+			colorAttachments: [
+				{
+					attachment: swapChain.getCurrentTexture().createView(),
+					loadValue: { r: 0.5, g: 0.5, b: 0.5, a: 1.0 },
+				},
+			],
+			depthStencilAttachment: {
+				attachment: depthTexture.createView(),
+
+				depthLoadValue: 1.0,
+				depthStoreOp: "store",
+				stencilLoadValue: 0,
+				stencilStoreOp: "store",
+			},
+		};
+
+		if(scene.pointcloud){
+
+			let csBindGroup = device.createBindGroup({
+				layout: csPipeline.getBindGroupLayout(0),
+				entries: [{
+					binding: 0,
+					resource: {
+						buffer: scene.pointcloud.bufPositions,
+						offset: 0,
+						size: 16 * 1_000_000,
+					}
+				},{
+					binding: 1,
+					resource: {
+						buffer: scene.pointcloud.bufColors,
+						offset: 0,
+						size: 16 * 1_000_000,
+					}
+				}],
+			});
+
+			const commandEncoder = device.createCommandEncoder();
+
+			if(frame > 10){
+				let passEncoder = commandEncoder.beginComputePass();
+				passEncoder.setPipeline(csPipeline);
+				passEncoder.setBindGroup(0, csBindGroup);
+				passEncoder.dispatch(100_000);
+				passEncoder.endPass();
+			}
+
+			{
+				let passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+				passEncoder.setPipeline(pipeline);
+				passEncoder.setBindGroup(0, uniformBindGroup);
+
+				passEncoder.setVertexBuffer(0, scene.pointcloud.bufPositions);
+				passEncoder.setVertexBuffer(1, scene.pointcloud.bufColors);
+
+				//for(let i = 0; i < vbos.length; i++){
+				//	passEncoder.setVertexBuffer(i, vbos[i].vbo);
+				//}
+
+				passEncoder.draw(scene.pointcloud.n, 1, 0, 0);
+				passEncoder.endPass();
+			}
+
+			device.defaultQueue.submit([commandEncoder.finish()]);
+		}
+
+		requestAnimationFrame(loop);
+	}
 	loop();
 
 }
 
 run();
+
+

@@ -1,0 +1,93 @@
+<html>
+<head>
+
+</head>
+<body style="padding: 0; margin: 0">
+
+
+<div id="dropZone" style="border: 1px solid black; width: 800px; height: 600px;">
+	dropzone
+</div>
+
+
+<script>
+
+var dropZone = document.getElementById('dropZone');
+
+// Optional.   Show the copy icon when dragging over.  Seems to only work for chrome.
+dropZone.addEventListener('dragover', function(e) {
+	e.stopPropagation();
+	e.preventDefault();
+	e.dataTransfer.dropEffect = 'copy';
+});
+
+// Get file data on drop
+dropZone.addEventListener('drop', async function(e) {
+	e.stopPropagation();
+	e.preventDefault();
+	var files = e.dataTransfer.files; 
+
+	for (let file of files) {
+
+		console.log(file);
+
+		let tStart = performance.now();
+
+		let batchSize = 100_000_000;
+		let bytesRead = 0;
+
+		while(true){
+
+			let start = bytesRead;
+			let end = start + batchSize;
+
+			let blob = file.slice(start, end);
+			let data = await blob.arrayBuffer();
+
+			if(data.byteLength === 0){
+				break;
+			}
+
+			bytesRead += data.byteLength;
+
+			console.log(bytesRead);
+		}
+
+		console.log("done");
+
+		let duration = performance.now() - tStart;
+		console.log(`duration: ${duration}ms`);
+
+		let mbs = (bytesRead / 1024 ** 2) / (duration / 1000);
+		console.log(`${mbs}MB/s`);
+
+	}
+});
+
+async function run(){
+	let tStart = performance.now();
+
+	let response = await fetch("./heidentor.las");
+	console.log("00");
+	let blob = await response.blob();
+	console.log("10");
+	let buffer = await blob.arrayBuffer();
+	console.log("20");
+	//let buffer = await response.arrayBuffer();
+
+	let bytesRead = buffer.byteLength;
+	
+	let duration = performance.now() - tStart;
+	console.log(`duration: ${duration}ms`);
+
+	let mbs = (bytesRead / 1024 ** 2) / (duration / 1000);
+	console.log(`${mbs}MB/s`);
+}
+
+run();
+
+</script>
+
+
+</body>
+</html>
