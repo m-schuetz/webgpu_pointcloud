@@ -93,9 +93,16 @@ export let csLasToVBO = `
 	[[offset(0)]] values : [[stride(16)]] array<vec4<f32>>;
 };
 
+[[block]] struct Params {
+  [[offset(0)]] start : u32;
+  [[offset(4)]] numPoints : u32;
+};
+
 [[binding(0), set(0)]] var<storage_buffer> lasdata : LasData;
 [[binding(1), set(0)]] var<storage_buffer> positions : Positions;
 [[binding(2), set(0)]] var<storage_buffer> colors : Colors;
+
+[[binding(3), set(0)]] var<uniform> params : Params;
 
 [[builtin(global_invocation_id)]] var<in> GlobalInvocationID : vec3<u32>;
 
@@ -109,7 +116,6 @@ fn readU32(byteOffset : u32) -> u32{
 	var b3SourceIndex : u32 = (byteOffset + 3) / 4u;
 
 	var result : u32 = 0u;
-
 	
 	var overlapCase : u32 = byteOffset % 4u;
 
@@ -138,7 +144,7 @@ fn main() -> void{
 
 	var index : u32 = GlobalInvocationID.x;
 
-	if(index > 100 * 1000){
+	if(index > params.numPoints){
 		return;
 	}
 
@@ -150,13 +156,11 @@ fn main() -> void{
 	var y : f32 = f32(uy) / 1000.0;
 	var z : f32 = f32(uz) / 1000.0;
 
-	positions.values[3 * index + 0] = x;
-	positions.values[3 * index + 1] = y;
-	positions.values[3 * index + 2] = z;
-	
-	#positions.values[3 * index + 0] = f32(index) / 1000.0;
-	#positions.values[3 * index + 1] = 0.0;
-	#positions.values[3 * index + 2] = 0.0;
+	var targetIndex : u32 = params.start + index;
+
+	positions.values[3 * targetIndex + 0] = x;
+	positions.values[3 * targetIndex + 1] = y;
+	positions.values[3 * targetIndex + 2] = z;
 
 	var R : u32 = readU32(index * recordLength + 20u) & 0x0000ffff;
 	var G : u32 = readU32(index * recordLength + 20u) >> 16;
@@ -174,10 +178,10 @@ fn main() -> void{
 		B = B / 256u;
 	}
 
-	colors.values[index].r = f32(R) / 256.0;
-	colors.values[index].g = f32(G) / 256.0;
-	colors.values[index].b = f32(B) / 256.0;
-	colors.values[index].a = 1.0;
+	colors.values[targetIndex].r = f32(R) / 256.0;
+	colors.values[targetIndex].g = f32(G) / 256.0;
+	colors.values[targetIndex].b = f32(B) / 256.0;
+	colors.values[targetIndex].a = 1.0;
 
 	return;
 }

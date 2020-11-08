@@ -89,7 +89,7 @@ export class LASLoader{
 		let header = this.header;
 		let numPoints = header.numPoints;
 		let bytesPerPoint = header.pointDataRecordLength;
-		let batchSize = 100_000; 
+		let batchSize = 1000_000; 
 
 		while(pointsLoaded < numPoints){
 
@@ -123,40 +123,40 @@ export class LASLoader{
 
 			let tParseStart = performance.now();
 
-			let positions = new Float32Array(3 * currentBatchSize);
-			let colors = new Float32Array(4 * currentBatchSize);
+			// let positions = new Float32Array(3 * currentBatchSize);
+			// let colors = new Float32Array(4 * currentBatchSize);
 
-			for(let i = 0; i < currentBatchSize; i++){
+			// for(let i = 0; i < currentBatchSize; i++){
 
-				let pointOffset = i * bytesPerPoint;
+			// 	let pointOffset = i * bytesPerPoint;
 				
-				let ux = view.getInt32(pointOffset + 0, true);
-				let uy = view.getInt32(pointOffset + 4, true);
-				let uz = view.getInt32(pointOffset + 8, true);
+			// 	let ux = view.getInt32(pointOffset + 0, true);
+			// 	let uy = view.getInt32(pointOffset + 4, true);
+			// 	let uz = view.getInt32(pointOffset + 8, true);
 
-				let x = (ux * scaleX) + offsetX - minX;
-				let y = (uy * scaleY) + offsetY - minY;
-				let z = (uz * scaleZ) + offsetZ - minZ;
+			// 	let x = (ux * scaleX) + offsetX - minX;
+			// 	let y = (uy * scaleY) + offsetY - minY;
+			// 	let z = (uz * scaleZ) + offsetZ - minZ;
 
-				positions[3 * i + 0] = x;
-				positions[3 * i + 1] = y;
-				positions[3 * i + 2] = z;
+			// 	positions[3 * i + 0] = x;
+			// 	positions[3 * i + 1] = y;
+			// 	positions[3 * i + 2] = z;
 
-				let r = view.getUint16(pointOffset + rgbOffset + 0) / 256;
-				let g = view.getUint16(pointOffset + rgbOffset + 2) / 256;
-				let b = view.getUint16(pointOffset + rgbOffset + 4) / 256;
+			// 	let r = view.getUint16(pointOffset + rgbOffset + 0) / 256;
+			// 	let g = view.getUint16(pointOffset + rgbOffset + 2) / 256;
+			// 	let b = view.getUint16(pointOffset + rgbOffset + 4) / 256;
 
-				colors[4 * i + 0] = r;
-				colors[4 * i + 1] = g;
-				colors[4 * i + 2] = b;
-				colors[4 * i + 3] = 1;
-			}
+			// 	colors[4 * i + 0] = r;
+			// 	colors[4 * i + 1] = g;
+			// 	colors[4 * i + 2] = b;
+			// 	colors[4 * i + 3] = 1;
+			// }
 
 			let batch = {
 				header: header,
 				size: currentBatchSize,
-				positions: positions, 
-				colors: colors,
+				// positions: positions, 
+				// colors: colors,
 				buffer: buffer,
 			};
 
@@ -170,7 +170,7 @@ export class LASLoader{
 				let durationLoadString = parseInt(durationLoad) + "ms";
 				let durationParseString = parseInt(durationParse) + "ms";
 				let strPoints = `${currentBatchSize.toLocaleString()} points`;
-				// console.log(`batch(${strPoints}) loaded in ${durationLoadString}, parsed in ${durationParseString}`);
+				console.log(`batch(${strPoints}) loaded in ${durationLoadString}, parsed in ${durationParseString}`);
 			}
 
 			yield batch;
@@ -184,4 +184,105 @@ export class LASLoader{
 	}
 
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export class DropLasLoader{
+	constructor(file){
+		this.file = file;
+	}
+
+	async loadHeader(){
+		let byteOffset = 0;
+		let byteSize = 375;
+
+		// let response = await fetch(this.url, {
+		// 	headers: {
+		// 		'content-type': 'multipart/byteranges',
+		// 		'Range': `bytes=${byteOffset}-${byteOffset + byteSize}`,
+		// 	},
+		// });
+
+		let buffer = await this.file.slice(byteOffset, byteSize).arrayBuffer();
+
+		// let buffer = await response.arrayBuffer();
+
+		let header = LASHeader.fromBuffer(buffer);
+
+		this.header = header;
+
+		return header;
+	}
+
+	async *loadBatches(){
+
+		let tStart = performance.now();
+
+		let pointsLoaded = 0;
+		let header = this.header;
+		let numPoints = header.numPoints;
+		let bytesPerPoint = header.pointDataRecordLength;
+		let batchSize = 1000_000; 
+
+		while(pointsLoaded < numPoints){
+
+			let tBatchStart = performance.now();
+
+			let pointsLeft = numPoints - pointsLoaded;
+			let currentBatchSize = Math.min(batchSize, pointsLeft);
+			let fetchStart = header.offsetToPointData + pointsLoaded * bytesPerPoint;
+			let fetchEnd = fetchStart + currentBatchSize * bytesPerPoint;
+
+			let response = await fetch(this.url, {
+				headers: {
+					'content-type': 'multipart/byteranges',
+					'Range': `bytes=${fetchStart}-${fetchEnd}`,
+				},
+			});
+
+			let buffer = await response.arrayBuffer();
+
+			let tLoadEnd = performance.now();
+
+			let batch = {
+				header: header,
+				size: currentBatchSize,
+				buffer: buffer,
+			};
+
+			pointsLoaded += currentBatchSize;
+
+			let tEnd = performance.now();
+
+			{ // print some stats
+				let durationLoad = (tLoadEnd - tBatchStart);
+				let durationLoadString = parseInt(durationLoad) + "ms";
+				let durationParseString = parseInt(durationParse) + "ms";
+				let strPoints = `${currentBatchSize.toLocaleString()} points`;
+				console.log(`batch(${strPoints}) loaded in ${durationLoadString}`);
+			}
+
+			yield batch;
+		}
+
+		let duration = performance.now() - tStart;
+		let durationStr = (duration / 1000).toFixed(3) + "s";
+		console.log(`point cloud loaded in: ${durationStr}`);
+
+		return;
+	}
+}
 
