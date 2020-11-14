@@ -377,7 +377,7 @@ async function run(){
 				stencilLoadValue: 0,
 				stencilStoreOp: "store",
 			},
-			// sampleCount: 16,
+			sampleCount: 16,
 		};
 
 		if(scene.pointcloud){

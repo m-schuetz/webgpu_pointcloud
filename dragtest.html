@@ -21,6 +21,72 @@ dropZone.addEventListener('dragover', function(e) {
 	e.dataTransfer.dropEffect = 'copy';
 });
 
+// // Get file data on drop
+// dropZone.addEventListener('drop', async function(e) {
+// 	e.stopPropagation();
+// 	e.preventDefault();
+// 	var files = e.dataTransfer.files; 
+
+// 	for (let file of files) {
+
+// 		console.log(file);
+
+// 		let tStart = performance.now();
+
+// 		let batchSize = 100_000_000;
+// 		let bytesRead = 0;
+
+// 		outerLoop:
+// 		while(true){
+
+// 			let start = bytesRead;
+// 			let end = start + batchSize;
+
+// 			let blobs = [
+// 				file.slice(start + 0 * batchSize, start + 1 * batchSize),
+// 				file.slice(start + 1 * batchSize, start + 2 * batchSize),
+// 				file.slice(start + 2 * batchSize, start + 3 * batchSize),
+// 				file.slice(start + 3 * batchSize, start + 4 * batchSize),
+// 				file.slice(start + 4 * batchSize, start + 5 * batchSize),
+// 				file.slice(start + 5 * batchSize, start + 6 * batchSize),
+// 				file.slice(start + 6 * batchSize, start + 7 * batchSize),
+// 			];
+
+// 			let buffers = await Promise.all(blobs.map(b => b.arrayBuffer()));
+
+// 			for(let buffer of buffers){
+// 				if(buffer.byteLength === 0){
+// 					break outerLoop;
+// 				}else{
+// 					bytesRead += buffer.byteLength;
+// 					console.log(bytesRead);
+// 				}
+// 			}
+
+
+// 			// let blob = file.slice(start, end);
+// 			// let data = await blob.arrayBuffer();
+
+// 			// if(data.byteLength === 0){
+// 			// 	break;
+// 			// }
+
+// 			// bytesRead += data.byteLength;
+
+// 			// console.log(bytesRead);
+// 		}
+
+// 		console.log("done");
+
+// 		let duration = performance.now() - tStart;
+// 		console.log(`duration: ${duration}ms`);
+
+// 		let mbs = (bytesRead / 1024 ** 2) / (duration / 1000);
+// 		console.log(`${mbs}MB/s`);
+
+// 	}
+// });
+
 // Get file data on drop
 dropZone.addEventListener('drop', async function(e) {
 	e.stopPropagation();
@@ -36,30 +102,59 @@ dropZone.addEventListener('drop', async function(e) {
 		let batchSize = 100_000_000;
 		let bytesRead = 0;
 
-		while(true){
+		let slices = [];
+		for(let start = 0; start <= file.size; start += batchSize){
+			let slice = {
+				start: start,
+				end: start + batchSize,
+			};
 
-			let start = bytesRead;
-			let end = start + batchSize;
-
-			let blob = file.slice(start, end);
-			let data = await blob.arrayBuffer();
-
-			if(data.byteLength === 0){
-				break;
-			}
-
-			bytesRead += data.byteLength;
-
-			console.log(bytesRead);
+			slices.push(slice);
 		}
 
-		console.log("done");
+		let onFinish = () => {
+			let duration = performance.now() - tStart;
+			console.log(`duration: ${duration}ms`);
 
-		let duration = performance.now() - tStart;
-		console.log(`duration: ${duration}ms`);
+			let MB = (bytesRead / 1024 ** 2);
+			let mbs = MB / (duration / 1000);
+			console.log(`${mbs}MB/s`);
+			console.log(`loaded ${MB}MB`);
+		};
+		let numLoading = 0;
 
-		let mbs = (bytesRead / 1024 ** 2) / (duration / 1000);
-		console.log(`${mbs}MB/s`);
+		let handler = (slice) => {
+
+			numLoading++;
+			let fileSlice = file.slice(slice.start, slice.end);
+
+			fileSlice.arrayBuffer().then(buffer => {
+				console.log(`slice loaded: ${slice.start} - ${slice.end}`);
+				numLoading--;
+
+				bytesRead += buffer.byteLength;
+
+				if(slices.length > 0){
+					let nextSlice = slices.shift();
+
+					handler(nextSlice);
+				}else{
+					if(numLoading === 0){
+						onFinish();
+					}
+					
+				}
+			});
+
+		};
+
+		let concurrentLoads = 5;
+		for(let i = 0; i < concurrentLoads; i++){
+			let slice = slices.shift();
+			handler(slice);
+		}
+
+
 
 	}
 });
@@ -84,7 +179,7 @@ async function run(){
 	console.log(`${mbs}MB/s`);
 }
 
-run();
+// run();
 
 </script>
 

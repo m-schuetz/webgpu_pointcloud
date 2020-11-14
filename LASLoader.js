@@ -33,6 +33,7 @@ class LASHeader{
 			console.warn("LAS 1.4 64 bit number of point values not yet supported");
 			header.numPoints = view.getUint32(247 + 4, true);
 		}
+		header.numPoints = Math.min(header.numPoints, 120_000_000);
 
 		header.scale = [
 			view.getFloat64(131, true),
