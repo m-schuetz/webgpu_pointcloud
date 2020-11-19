@@ -19,6 +19,8 @@ let depthTexture = null;
 
 let cameraDistance = 20;
 
+let frame = 0;
+
 let scene = {
 	pointcloud: null,
 };
@@ -74,149 +76,7 @@ async function init(){
 
 }
 
-async function initScene(){
 
-	return true;
-
-	let loader = new LASLoader(urlPointcloud);
-	await loader.loadHeader();
-
-	let numPoints = loader.header.numPoints;
-
-	let descriptorPos = {
-		size: 12 * numPoints,
-		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-	};
-	let bufPositions = device.createBuffer(descriptorPos);
-
-	let descriptorCol = {
-		size: 16 * numPoints,
-		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-	};
-	let bufColors = device.createBuffer(descriptorCol);
-
-	let sceneObject = {
-		n: 0,
-		bufPositions: bufPositions,
-		bufColors: bufColors,
-	};
-
-	let elProgress = document.getElementById("progress");
-
-	let pipeline = device.createComputePipeline({
-		computeStage: {
-			module: device.createShaderModule({code: shaders.csLasToVBO}),
-			entryPoint: "main",
-		}
-	});
-
-	let bufParams = device.createBuffer({
-		size: 8,
-		usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-	});
-
-	let lasBufferSize = 1000_000 * 64;
-	let bufLasTransfer = device.createBuffer({
-		size: lasBufferSize,
-		usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.MAP_WRITE,
-	});
-	
-	let bufLasCompute = device.createBuffer({
-		size: lasBufferSize,
-		usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-	});
-
-	let asyncLoad = async () => {
-		let iterator = loader.loadBatches();
-		let pointsLoaded = 0;
-		for await (let batch of iterator){
-
-			let paramsData = new Uint32Array([pointsLoaded, batch.size]);
-			device.defaultQueue.writeBuffer(bufParams, 0, paramsData);
-
-			await bufLasTransfer.mapAsync(GPUMapMode.WRITE, 0, lasBufferSize);
-			new Uint8Array(bufLasTransfer.getMappedRange()).set(new Uint8Array(batch.buffer));
-			bufLasTransfer.unmap();
-
-			const encoder = device.createCommandEncoder();
-			encoder.copyBufferToBuffer(bufLasTransfer, 0, bufLasCompute, 0, lasBufferSize);
-			device.defaultQueue.submit([encoder.finish()]);
-
-
-			//let tmp = new Uint8Array(batch.size * 64);
-			//tmp.set(new Uint8Array(batch.buffer));
-			//device.defaultQueue.writeBuffer(lasbuffer, 0, tmp);
-
-			// if(pointsLoaded < 500_000){
-				let csBindGroup = device.createBindGroup({
-					layout: pipeline.getBindGroupLayout(0),
-					entries: [{
-						binding: 0,
-						resource: {
-							buffer: bufLasCompute,
-							offset: 0,
-							size: batch.size * 64,
-						}
-					},{
-						binding: 1,
-						resource: {
-							buffer: bufPositions,
-							offset: 0,
-							size: bufPositions.byteLength,
-						}
-					},{
-						binding: 2,
-						resource: {
-							buffer: bufColors,
-							offset: 0,
-							size: bufColors.byteLength,
-						}
-					},{
-						binding: 3,
-						resource: {
-							buffer: bufParams,
-							offset: 0,
-							size: bufParams.byteLength,
-						}
-					}],
-				});
-
-				const commandEncoder = device.createCommandEncoder();
-
-				let passEncoder = commandEncoder.beginComputePass();
-				passEncoder.setPipeline(pipeline);
-				passEncoder.setBindGroup(0, csBindGroup);
-				passEncoder.dispatch(batch.size);
-				passEncoder.endPass();
-
-				device.defaultQueue.submit([commandEncoder.finish()]);
-			// }else{
-			// 	device.defaultQueue.writeBuffer(bufPositions, 12 * pointsLoaded, batch.positions);
-			// 	device.defaultQueue.writeBuffer(bufColors, 16 * pointsLoaded, batch.colors);
-			// }
-
-
-
-
-
-
-			pointsLoaded += batch.size;
-
-			let progress = pointsLoaded / loader.header.numPoints;
-			let strProgress = `${parseInt(progress * 100)}`;
-			let msg = `loading: ${strProgress}%`;
-			elProgress.innerHTML = msg;
-
-			sceneObject.n = pointsLoaded;
-		}
-
-		elProgress.innerHTML = `loading finished`;
-	};
-
-	asyncLoad();
-
-	scene.pointcloud = sceneObject;
-}
 
 function createBuffer(data){
 
@@ -305,25 +165,13 @@ function createComputeLasToVboPipeline(){
 	return pipeline;
 }
 
-function createComputePipeline(){
-	let pipeline = device.createComputePipeline({
-		computeStage: {
-			module: device.createShaderModule({code: shaders.csTest}),
-			entryPoint: "main",
-		}
-	});
-
-	return pipeline;
-}
-
 async function run(){
 
 	await init()
-	initScene();
+	// initScene();
 
 	let vbos = createBuffer(pointCube);
 	let pipeline = createPipeline();
-	let csPipeline = createComputePipeline();
 	let csLasToVboPipeline = createComputeLasToVboPipeline();
 
 	const uniformBufferSize = 4 * 16; // 4x4 matrix
@@ -348,8 +196,6 @@ async function run(){
 
 
 
-
-	let frame = 0;
 	let loop = () => {
 		frame++;
 
@@ -382,34 +228,7 @@ async function run(){
 
 		if(scene.pointcloud){
 
-			let csBindGroup = device.createBindGroup({
-				layout: csPipeline.getBindGroupLayout(0),
-				entries: [{
-					binding: 0,
-					resource: {
-						buffer: scene.pointcloud.bufPositions,
-						offset: 0,
-						size: 16 * 1_000_000,
-					}
-				},{
-					binding: 1,
-					resource: {
-						buffer: scene.pointcloud.bufColors,
-						offset: 0,
-						size: 16 * 1_000_000,
-					}
-				}],
-			});
-
 			const commandEncoder = device.createCommandEncoder();
-
-			// if(frame > 10){
-			// 	let passEncoder = commandEncoder.beginComputePass();
-			// 	passEncoder.setPipeline(csPipeline);
-			// 	passEncoder.setBindGroup(0, csBindGroup);
-			// 	passEncoder.dispatch(100_000);
-			// 	passEncoder.endPass();
-			// }
 
 			{
 				let passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
@@ -479,113 +298,173 @@ async function run(){
 		};
 		scene.pointcloud = sceneObject;
 
-		let pipeline = device.createComputePipeline({
-			computeStage: {
-				module: device.createShaderModule({code: shaders.csLasToVBO}),
-				entryPoint: "main",
-			}
-		});
-
-		let bufParams = device.createBuffer({
-			size: 8,
-			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-		});
-
-		let lasBufferSize = batchSize * 64;
-		let bufLasTransfer = device.createBuffer({
-			size: lasBufferSize,
-			usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.MAP_WRITE,
-		});
-		
-		let bufLasCompute = device.createBuffer({
-			size: lasBufferSize,
-			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-		});
-
 		let pointsLoaded = 0;
 		let bytesPerPoint = header.pointDataRecordLength;
 
-		while(pointsLoaded < numPoints){
+		let onFinish = () => {
+			let duration = performance.now() - tStart;
+			let pointsPerSecond = (1000 * pointsLoaded / duration) / 1_000_000;
+			console.log(`loading finished in ${duration / 1000}s`);
+			console.log(`${pointsPerSecond.toFixed(1)}M Points/s`);
+		};
+
+		let batches = [];
+
+		let pointsHandled = 0;
+		while(pointsHandled < numPoints){
 
 			// load batch data
-			let pointsLeft = numPoints - pointsLoaded;
+			let pointsLeft = numPoints - pointsHandled;
 			let currentBatchSize = Math.min(batchSize, pointsLeft);
-			let start = header.offsetToPointData + pointsLoaded * bytesPerPoint;
+			let start = header.offsetToPointData + pointsHandled * bytesPerPoint;
 			let end = start + currentBatchSize * bytesPerPoint;
 
 			let blob = file.slice(start, end);
-			let buffer = await blob.arrayBuffer();
-
+			
 			let batch = {
-				header: header,
-				size: currentBatchSize,
-				buffer: buffer,
+				numPoints: currentBatchSize,
+				pointOffset: pointsHandled,
+				start: start,
+				end: end,
+				blob: blob,
 			};
 
-			// send to gpu
-			let paramsData = new Uint32Array([pointsLoaded, batch.size]);
-			device.defaultQueue.writeBuffer(bufParams, 0, paramsData);
-
-			await bufLasTransfer.mapAsync(GPUMapMode.WRITE, 0, lasBufferSize);
-			new Uint8Array(bufLasTransfer.getMappedRange()).set(new Uint8Array(batch.buffer));
-			bufLasTransfer.unmap();
-
-			const encoder = device.createCommandEncoder();
-			encoder.copyBufferToBuffer(bufLasTransfer, 0, bufLasCompute, 0, lasBufferSize);
-			device.defaultQueue.submit([encoder.finish()]);
-
-			// parse with compute shader
-			let csBindGroup = device.createBindGroup({
-				layout: pipeline.getBindGroupLayout(0),
-				entries: [{
-					binding: 0,
-					resource: {
-						buffer: bufLasCompute,
-						offset: 0,
-						size: batch.size * 64,
-					}
-				},{
-					binding: 1,
-					resource: {
-						buffer: bufPositions,
-						offset: 0,
-						size: bufPositions.byteLength,
-					}
-				},{
-					binding: 2,
-					resource: {
-						buffer: bufColors,
-						offset: 0,
-						size: bufColors.byteLength,
-					}
-				},{
-					binding: 3,
-					resource: {
-						buffer: bufParams,
-						offset: 0,
-						size: bufParams.byteLength,
-					}
-				}],
-			});
-
-			const commandEncoder = device.createCommandEncoder();
-
-			let passEncoder = commandEncoder.beginComputePass();
-			passEncoder.setPipeline(pipeline);
-			passEncoder.setBindGroup(0, csBindGroup);
-			passEncoder.dispatch(batch.size);
-			passEncoder.endPass();
-
-			device.defaultQueue.submit([commandEncoder.finish()]);
-
-			pointsLoaded += currentBatchSize;
-			sceneObject.n = pointsLoaded;
+			batches.push(batch);
+			pointsHandled += currentBatchSize;
 		}
 
-		let duration = performance.now() - tStart;
-		let pointsPerSecond = (1000 * pointsLoaded / duration) / 1_000_000;
-		console.log(`loading finished in ${duration / 1000}s`);
-		console.log(`${pointsPerSecond.toFixed(1)}M Points/s`);
+		let batchesPending = batches.length;
+
+		let numConcurrent = 5;
+		let loadBuffers = [];
+
+		let lasBufferSize = batchSize * 64;
+		for(let i = 0; i < numConcurrent; i++){
+			let pipeline = device.createComputePipeline({
+				computeStage: {
+					module: device.createShaderModule({code: shaders.csLasToVBO}),
+					entryPoint: "main",
+				}
+			});
+
+			let bufParams = device.createBuffer({
+				size: 8,
+				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+			});
+
+			let bufLasTransfer = device.createBuffer({
+				size: lasBufferSize,
+				usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.MAP_WRITE,
+			});
+			
+			let bufLasCompute = device.createBuffer({
+				size: lasBufferSize,
+				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+			});
+
+			let loadBuffer = {
+				pipeline: pipeline,
+				bufParams: bufParams,
+				bufLasTransfer: bufLasTransfer,
+				bufLasCompute: bufLasCompute,
+			};
+
+			loadBuffers.push(loadBuffer);
+		}
+
+
+		let handler = (batch) => {
+
+			batch.blob.arrayBuffer().then(async buffer => {
+
+				batchesPending--;
+
+				let lb = loadBuffers.shift();
+				let {pipeline, bufParams, bufLasTransfer, bufLasCompute} = lb;
+
+				// console.log(`sending blob to gpu: ${batch.start.toLocaleString()} - ${batch.end.toLocaleString()}`);
+				console.log([batch.pointOffset, batch.numPoints]);
+
+				// TODO: if multiple tasks try to mapAsync at the same time, one might pass and the other might error because one has already mapped the buffer
+				// if mapAsync fails, perhabs try again later, e.g., with setTimeout(1ms).
+				await bufLasTransfer.mapAsync(GPUMapMode.WRITE, 0, lasBufferSize);
+				new Uint8Array(bufLasTransfer.getMappedRange()).set(new Uint8Array(buffer));
+				bufLasTransfer.unmap();
+
+				const commandEncoder = device.createCommandEncoder();
+
+				// send to gpu
+				let paramsData = new Uint32Array([batch.pointOffset, batch.numPoints]);
+				device.defaultQueue.writeBuffer(bufParams, 0, paramsData);
+
+				commandEncoder.copyBufferToBuffer(bufLasTransfer, 0, bufLasCompute, 0, lasBufferSize);
+
+				// parse with compute shader
+				let csBindGroup = device.createBindGroup({
+					layout: pipeline.getBindGroupLayout(0),
+					entries: [{
+						binding: 0,
+						resource: {
+							buffer: bufLasCompute,
+							offset: 0,
+							size: batch.numPoints * 64,
+						}
+					},{
+						binding: 1,
+						resource: {
+							buffer: bufPositions,
+							offset: 0,
+							size: bufPositions.byteLength,
+						}
+					},{
+						binding: 2,
+						resource: {
+							buffer: bufColors,
+							offset: 0,
+							size: bufColors.byteLength,
+						}
+					},{
+						binding: 3,
+						resource: {
+							buffer: bufParams,
+							offset: 0,
+							size: bufParams.byteLength,
+						}
+					}],
+				});
+
+				let passEncoder = commandEncoder.beginComputePass();
+				passEncoder.setPipeline(pipeline);
+				passEncoder.setBindGroup(0, csBindGroup);
+				passEncoder.dispatch(batch.numPoints);
+				passEncoder.endPass();
+
+				device.defaultQueue.submit([commandEncoder.finish()]);
+
+				pointsLoaded += batch.numPoints;
+				sceneObject.n = pointsLoaded;
+
+				loadBuffers.push(lb);
+
+				if(batches.length > 0 && batchesPending > 0){
+					let batch = batches.shift();
+					handler(batch);
+				}
+				if(batchesPending === 0){
+					onFinish();
+				}
+
+			});
+		};
+
+		for(let i = 0; i < numConcurrent; i++){
+			let batch = batches.shift();
+			if(batch){
+				handler(batch);
+			}
+		}
+
+
 
 	}
 
